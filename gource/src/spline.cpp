@@ -1,0 +1,200 @@
+/*
+    Copyright (C) 2009 Andrew Caudwell (acaudwell@gmail.com)
+
+    This program is free software; you can redistribute it and/or
+    modify it under the terms of the GNU General Public License
+    as published by the Free Software Foundation; either version
+    3 of the License, or (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+// === File: src/spline.cpp =====================================================
+// AGENT: PURPOSE    — Spline edge rendering for connection visualization
+// AGENT: STATUS     — converted for WebGL (2026-01-09)
+// =============================================================================
+
+#include "spline.h"
+#include "core/renderer.h"
+
+SplineEdge::SplineEdge() {
+}
+
+void SplineEdge::update(const vec2& pos1, const vec4& col1, const vec2& pos2, const vec4& col2, const vec2& spos) {
+
+    vec2 pt_last;
+    vec4 col_last;
+
+    vec2 mid = (pos1 - pos2) * 0.5f;
+    vec2 to  = vec2(pos1 - spos);
+
+    //TODO: not sure this makes any sense
+    //float dp = std::min(1.0f, to.normal().dot(mid.normal()));
+    float dp = std::min(1.0f, glm::dot(normalise(to), normalise(mid)) );
+
+    float ang = acos(dp) / PI;
+
+    int edge_detail = std::min(10, (int) (ang * 100.0));
+
+    if(edge_detail<1) edge_detail = 1;
+
+    spline_point.clear();
+    spline_colour.clear();
+
+    spline_point.reserve(edge_detail+1);
+    spline_colour.reserve(edge_detail+1);
+
+    //calculate positions
+    for(int i=0; i <= edge_detail; i++) {
+        float t = (float)i/edge_detail;
+        float tt = 1.0f-t;
+
+        vec2 p0 = pos1 * t + spos * tt;
+        vec2 p1 = spos * t + pos2 * tt;
+
+        vec2 pt = p0 * t + p1 * tt;
+
+        vec4 coln = col1 * t + col2 * tt;
+
+        spline_point.push_back(pt);
+        spline_colour.push_back(coln);
+    }
+
+    const float pos = gGourceSettings.dir_name_position;
+
+    const float s_quota = 0.5f - glm::abs(pos - 0.5f);
+    const float p_quota = 1.0f - s_quota;
+
+    label_pos = pos1 * (p_quota * (1.0f - pos)) + pos2 * (p_quota * pos) + spos * s_quota;
+}
+
+const vec2& SplineEdge::getLabelPos() const {
+    return label_pos;
+}
+
+void SplineEdge::drawToVBO(quadbuf& buffer) const {
+
+    int edges_count = spline_point.size() - 1;
+
+    for(int i=0; i < edges_count; i++) {
+
+        //vec2 perp = (spline_point[i] - spline_point[i+1]).perpendicular().normal() * 2.5f;
+
+        vec2 perp = (spline_point[i] - spline_point[i+1]);
+        perp = normalise(vec2(-perp.y, perp.x)) * 2.5f;
+
+        quadbuf_vertex v1(spline_point[i]   + perp, spline_colour[i],   vec2(1.0f, 0.0f));
+        quadbuf_vertex v2(spline_point[i]   - perp, spline_colour[i],   vec2(0.0f, 0.0f));
+        quadbuf_vertex v3(spline_point[i+1] - perp, spline_colour[i+1], vec2(0.0f, 0.0f));
+        quadbuf_vertex v4(spline_point[i+1] + perp, spline_colour[i+1], vec2(1.0f, 0.0f));
+
+        buffer.add(0, v1, v2, v3, v4);
+    }
+}
+
+void SplineEdge::drawShadow() const{
+
+    int edges_count = spline_point.size() - 1;
+
+    vec2 offset(2.0, 2.0);
+    vec4 shadowColor(0.0f, 0.0f, 0.0f, gGourceShadowStrength);
+
+    auto& r = renderer();
+
+    // Draw quad strips as triangle strips for WebGL compatibility
+    // For each edge segment, draw a quad (2 triangles)
+    for(int i = 0; i < edges_count; i++) {
+        vec2 pos1 = spline_point[i] + offset;
+        vec2 pos2 = spline_point[i+1] + offset;
+
+        vec2 perp = (pos1 - pos2);
+        perp = normalise(vec2(-perp.y, perp.x)) * 2.5f;
+
+        // Draw as two triangles forming a quad
+        r.begin(GL_TRIANGLES);
+
+        // Triangle 1: v0, v1, v2
+        r.color(shadowColor);
+        r.texcoord(1.0f, 0.0f);
+        r.vertex(pos1.x + perp.x, pos1.y + perp.y);
+
+        r.color(shadowColor);
+        r.texcoord(0.0f, 0.0f);
+        r.vertex(pos1.x - perp.x, pos1.y - perp.y);
+
+        r.color(shadowColor);
+        r.texcoord(1.0f, 0.0f);
+        r.vertex(pos2.x + perp.x, pos2.y + perp.y);
+
+        // Triangle 2: v1, v3, v2
+        r.color(shadowColor);
+        r.texcoord(0.0f, 0.0f);
+        r.vertex(pos1.x - perp.x, pos1.y - perp.y);
+
+        r.color(shadowColor);
+        r.texcoord(0.0f, 0.0f);
+        r.vertex(pos2.x - perp.x, pos2.y - perp.y);
+
+        r.color(shadowColor);
+        r.texcoord(1.0f, 0.0f);
+        r.vertex(pos2.x + perp.x, pos2.y + perp.y);
+
+        r.end();
+    }
+}
+
+void SplineEdge::draw() const{
+
+    int edges_count = spline_point.size() - 1;
+
+    auto& r = renderer();
+
+    // Draw quad strips as triangle strips for WebGL compatibility
+    // For each edge segment, draw a quad (2 triangles)
+    for(int i = 0; i < edges_count; i++) {
+        vec2 pos1 = spline_point[i];
+        vec4 col1 = spline_colour[i];
+        vec2 pos2 = spline_point[i+1];
+        vec4 col2 = spline_colour[i+1];
+
+        vec2 perp = (pos1 - pos2);
+        perp = normalise(vec2(-perp.y, perp.x)) * 2.5f;
+
+        // Draw as two triangles forming a quad
+        r.begin(GL_TRIANGLES);
+
+        // Triangle 1: v0, v1, v2
+        r.color(col1);
+        r.texcoord(1.0f, 0.0f);
+        r.vertex(pos1.x + perp.x, pos1.y + perp.y);
+
+        r.color(col1);
+        r.texcoord(0.0f, 0.0f);
+        r.vertex(pos1.x - perp.x, pos1.y - perp.y);
+
+        r.color(col2);
+        r.texcoord(1.0f, 0.0f);
+        r.vertex(pos2.x + perp.x, pos2.y + perp.y);
+
+        // Triangle 2: v1, v3, v2
+        r.color(col1);
+        r.texcoord(0.0f, 0.0f);
+        r.vertex(pos1.x - perp.x, pos1.y - perp.y);
+
+        r.color(col2);
+        r.texcoord(0.0f, 0.0f);
+        r.vertex(pos2.x - perp.x, pos2.y - perp.y);
+
+        r.color(col2);
+        r.texcoord(1.0f, 0.0f);
+        r.vertex(pos2.x + perp.x, pos2.y + perp.y);
+
+        r.end();
+    }
+}
