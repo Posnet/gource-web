@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gource Web - Git Repository Visualizer</title>
+    <link rel="stylesheet" href="gource.css">
+</head>
+<body>
+    <div id="container">
+        <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="1"></canvas>
+        <div id="loading">
+            <div class="spinner"></div>
+            <p>Loading Gource...</p>
+        </div>
+        <div id="controls">
+            <input type="file" id="logFile" accept=".log,.txt" style="display: none;">
+            <button id="loadBtn">Load Git Log</button>
+            <button id="demoBtn">Load Demo</button>
+            <button id="fullscreenBtn">Fullscreen</button>
+            <button id="helpBtn" class="help-btn">?</button>
+            <span id="fps"></span>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="helpModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close">&times;</span>
+            <h2>Keyboard Controls</h2>
+            <div class="controls-grid">
+                <div class="control-section">
+                    <h3>Playback</h3>
+                    <div class="control-row"><kbd>Space</kbd> Pause/Resume</div>
+                    <div class="control-row"><kbd>+</kbd> / <kbd>-</kbd> Speed up/down</div>
+                    <div class="control-row"><kbd>.</kbd> / <kbd>,</kbd> Step forward/back (paused)</div>
+                </div>
+                <div class="control-section">
+                    <h3>Camera</h3>
+                    <div class="control-row"><kbd>A</kbd> Toggle auto-camera</div>
+                    <div class="control-row"><kbd>Arrow Keys</kbd> Pan camera</div>
+                    <div class="control-row"><kbd>Scroll</kbd> Zoom in/out</div>
+                    <div class="control-row"><kbd>Tab</kbd> Cycle through users</div>
+                </div>
+                <div class="control-section">
+                    <h3>Display</h3>
+                    <div class="control-row"><kbd>K</kbd> Toggle file extension key</div>
+                    <div class="control-row"><kbd>M</kbd> Toggle mouse visibility</div>
+                    <div class="control-row"><kbd>N</kbd> Toggle usernames</div>
+                    <div class="control-row"><kbd>F</kbd> Toggle filenames</div>
+                    <div class="control-row"><kbd>D</kbd> Toggle directories</div>
+                    <div class="control-row"><kbd>B</kbd> Toggle bloom</div>
+                    <div class="control-row"><kbd>S</kbd> Screenshot</div>
+                </div>
+                <div class="control-section">
+                    <h3>Other</h3>
+                    <div class="control-row"><kbd>Q</kbd> / <kbd>Esc</kbd> Quit</div>
+                    <div class="control-row"><kbd>1-9</kbd> Jump to % through timeline</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="gource-web.js"></script>
+    <script src="gource.js"></script>
+    <script>
+        // Auto-load demo if ?demo query param is present
+        if (window.location.search.includes('demo')) {
+            window.addEventListener('load', () => {
+                setTimeout(() => {
+                    if (window.GourceWeb) {
+                        window.GourceWeb.loadLogFromUrl('demo.log');
+                    }
+                }, 1000);
+            });
+        }
+
+        // Demo button handler
+        document.getElementById('demoBtn').addEventListener('click', () => {
+            if (window.GourceWeb) {
+                window.GourceWeb.loadLogFromUrl('demo.log');
+            }
+        });
+
+        // Help modal handlers
+        const modal = document.getElementById('helpModal');
+        const helpBtn = document.getElementById('helpBtn');
+        const closeBtn = document.querySelector('.modal-close');
+
+        helpBtn.addEventListener('click', () => {
+            modal.classList.add('show');
+        });
+
+        closeBtn.addEventListener('click', () => {
+            modal.classList.remove('show');
+        });
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.classList.remove('show');
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && modal.classList.contains('show')) {
+                modal.classList.remove('show');
+            }
+        });
+    </script>
+</body>
+</html>

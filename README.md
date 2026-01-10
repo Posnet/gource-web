@@ -4,7 +4,7 @@ A WebAssembly port of [Gource](https://github.com/acaudwell/Gource), the softwar
 
 ## Live Demo
 
-Visit the live demo at: https://posnet.github.io/gource-web/ (coming soon)
+Visit the live demo at: https://posnet.github.io/gource-web/
 
 ## Features
 
