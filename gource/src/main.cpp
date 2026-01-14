@@ -23,6 +23,28 @@ extern "C" {
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_KEEPALIVE
 #endif
+void gource_reset() {
+    printf("gource_reset: cleaning up...\n");
+
+#ifdef __EMSCRIPTEN__
+    // Cancel the main loop first
+    emscripten_cancel_main_loop();
+#endif
+
+    // Clean up existing GourceShell
+    if (g_gourcesh) {
+        delete g_gourcesh;
+        g_gourcesh = nullptr;
+        gGourceShell = nullptr;
+    }
+
+    g_gource_started = false;
+    printf("gource_reset: done\n");
+}
+
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
 int gource_load_log(const char* log_data) {
     if (!log_data || strlen(log_data) == 0) {
         printf("gource_load_log: no data or empty\n");
@@ -31,9 +53,10 @@ int gource_load_log(const char* log_data) {
 
     printf("Log data received: %zu bytes\n", strlen(log_data));
 
+    // If already running, reset first
     if (g_gource_started) {
-        printf("Gource already started, ignoring new log\n");
-        return 0;
+        printf("Gource already running, resetting...\n");
+        gource_reset();
     }
 
 #ifdef __EMSCRIPTEN__

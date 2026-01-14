@@ -154,7 +154,7 @@ target("gource-web")
     add_ldflags("-sNO_DISABLE_EXCEPTION_CATCHING", {force = true})
     add_cxflags("-fexceptions", {force = true})
     add_ldflags("-sEXPORTED_RUNTIME_METHODS=[ccall,cwrap,UTF8ToString]", {force = true})
-    add_ldflags("-sEXPORTED_FUNCTIONS=[_main,_gource_load_log]", {force = true})
+    add_ldflags("-sEXPORTED_FUNCTIONS=[_main,_gource_load_log,_gource_reset]", {force = true})
     add_ldflags("-sMODULARIZE=1", "-sEXPORT_NAME=GourceModule", {force = true})
     add_ldflags("--preload-file", "data@/data", {force = true})
 

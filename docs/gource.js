@@ -2,6 +2,7 @@
 
 let gourceModule = null;
 let gourceLoadLog = null;
+let gourceReset = null;
 
 // GitHub Auth State
 let githubToken = localStorage.getItem('github_token');
@@ -28,6 +29,7 @@ GourceModule({
 
     // Get exported functions
     gourceLoadLog = module.cwrap('gource_load_log', 'number', ['string']);
+    gourceReset = module.cwrap('gource_reset', null, []);
 
     // Hide loading indicator
     document.getElementById('loading').classList.add('hidden');
@@ -545,5 +547,6 @@ updateGitHubButton();
 window.GourceWeb = {
     loadLog: (data) => gourceLoadLog && gourceLoadLog(data),
     loadLogFromUrl: loadLogFromUrl,
+    reset: () => gourceReset && gourceReset(),
     logout: logout
 };
