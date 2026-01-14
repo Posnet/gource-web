@@ -181,3 +181,143 @@ kbd {
         padding: 16px;
     }
 }
+
+/* GitHub Button */
+.github-btn {
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    background: rgba(36, 41, 47, 0.9) !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+.github-btn:hover {
+    background: rgba(55, 62, 71, 0.9) !important;
+}
+
+.github-btn.logged-in {
+    background: rgba(35, 134, 54, 0.8) !important;
+    border-color: rgba(35, 134, 54, 0.5) !important;
+}
+
+.github-btn svg {
+    flex-shrink: 0;
+}
+
+/* Repo Modal */
+.repo-modal-content {
+    width: 500px;
+    max-width: 90vw;
+}
+
+#repoSearch {
+    margin-bottom: 16px;
+}
+
+#repoSearchInput {
+    width: 100%;
+    padding: 10px 12px;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 14px;
+}
+
+#repoSearchInput:focus {
+    outline: none;
+    border-color: #58a6ff;
+}
+
+#repoSearchInput::placeholder {
+    color: #666;
+}
+
+.repo-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.repo-list.hidden {
+    display: none;
+}
+
+.loading-repos, .no-repos, .error {
+    text-align: center;
+    padding: 40px;
+    color: #888;
+}
+
+.error {
+    color: #f44;
+}
+
+.repo-item {
+    padding: 12px;
+    border: 1px solid #333;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.repo-item:hover {
+    background: #2a2a2a;
+    border-color: #58a6ff;
+}
+
+.repo-name {
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+.repo-private {
+    margin-right: 4px;
+}
+
+.repo-meta {
+    font-size: 12px;
+    color: #888;
+    display: flex;
+    gap: 12px;
+}
+
+.repo-lang {
+    color: #58a6ff;
+}
+
+/* Progress */
+.repo-progress {
+    padding: 40px 20px;
+    text-align: center;
+}
+
+.repo-progress.hidden {
+    display: none;
+}
+
+.progress-text {
+    margin-bottom: 16px;
+    font-size: 14px;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #333;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+
+.progress-fill {
+    height: 100%;
+    background: #58a6ff;
+    transition: width 0.3s ease;
+}
+
+.progress-detail {
+    font-size: 12px;
+    color: #888;
+}

@@ -1,0 +1,16 @@
+name = "gource-web"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Custom domain
+routes = [
+  { pattern = "gource.denialof.services", custom_domain = true }
+]
+
+# Static assets from docs folder
+[assets]
+directory = "../docs"
+
+# Environment variables (secrets set via wrangler secret put)
+[vars]
+GITHUB_CLIENT_ID = "Iv23liJkvDRUkjHjGR2c"
