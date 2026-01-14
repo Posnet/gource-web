@@ -210,6 +210,67 @@ kbd {
     max-width: 90vw;
 }
 
+.repo-url-section {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+#repoUrlField {
+    flex: 1;
+    padding: 10px 12px;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 14px;
+}
+
+#repoUrlField:focus {
+    outline: none;
+    border-color: #58a6ff;
+}
+
+#repoUrlField::placeholder {
+    color: #666;
+}
+
+#repoUrlBtn {
+    padding: 10px 20px;
+    background: #238636;
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+#repoUrlBtn:hover {
+    background: #2ea043;
+}
+
+.repo-divider {
+    display: flex;
+    align-items: center;
+    margin: 16px 0;
+    color: #666;
+    font-size: 12px;
+}
+
+.repo-divider::before,
+.repo-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #333;
+}
+
+.repo-divider span {
+    padding: 0 12px;
+}
+
 #repoSearch {
     margin-bottom: 16px;
 }
@@ -299,6 +360,26 @@ kbd {
     font-weight: 500;
     text-transform: uppercase;
     vertical-align: middle;
+}
+
+.repo-refresh-btn {
+    display: inline-block;
+    padding: 2px 6px;
+    margin-left: 6px;
+    background: transparent;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #888;
+    font-size: 12px;
+    cursor: pointer;
+    vertical-align: middle;
+    transition: all 0.2s;
+}
+
+.repo-refresh-btn:hover {
+    background: rgba(88, 166, 255, 0.2);
+    border-color: #58a6ff;
+    color: #58a6ff;
 }
 
 .repo-commits {

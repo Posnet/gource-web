@@ -3,6 +3,8 @@
 let gourceModule = null;
 let gourceLoadLog = null;
 let gourceReset = null;
+let gourcePause = null;
+let gourceResume = null;
 
 // GitHub Auth State
 let githubToken = localStorage.getItem('github_token');
@@ -30,6 +32,8 @@ GourceModule({
     // Get exported functions
     gourceLoadLog = module.cwrap('gource_load_log', 'number', ['string']);
     gourceReset = module.cwrap('gource_reset', null, []);
+    gourcePause = module.cwrap('gource_pause', null, []);
+    gourceResume = module.cwrap('gource_resume', null, []);
 
     // Hide loading indicator
     document.getElementById('loading').classList.add('hidden');
@@ -129,6 +133,11 @@ function isModalOpen() {
     return activeModals > 0;
 }
 
+// Export modal functions globally for inline scripts
+window.openModal = openModal;
+window.closeModal = closeModal;
+window.isModalOpen = isModalOpen;
+
 // Fetch log from URL
 async function loadLogFromUrl(url) {
     try {
@@ -211,19 +220,48 @@ function logout() {
 // GitHub button click handler
 document.getElementById('githubBtn').addEventListener('click', async () => {
     if (githubToken && githubUser) {
-        // Already logged in - show repo selector
-        showRepoModal();
+        // Already logged in - show repo selector with user's repos
+        showRepoModal(true);
     } else {
-        // Start OAuth flow
-        try {
-            const response = await fetch('/api/auth/github');
-            const data = await response.json();
-            if (data.url) {
-                window.location.href = data.url;
-            }
-        } catch (err) {
-            console.error('Failed to start OAuth:', err);
+        // Not logged in - show modal with just URL input
+        showRepoModal(false);
+    }
+});
+
+// Parse GitHub URL to extract owner/repo
+function parseGitHubUrl(url) {
+    // Handle various GitHub URL formats
+    const patterns = [
+        /github\.com\/([^\/]+)\/([^\/\?#]+)/,  // https://github.com/owner/repo
+        /github\.com:([^\/]+)\/([^\/\?#]+)/,   // git@github.com:owner/repo
+    ];
+    for (const pattern of patterns) {
+        const match = url.match(pattern);
+        if (match) {
+            return { owner: match[1], repo: match[2].replace(/\.git$/, '') };
         }
+    }
+    return null;
+}
+
+// URL clone button handler
+document.getElementById('repoUrlBtn').addEventListener('click', () => {
+    const urlField = document.getElementById('repoUrlField');
+    const url = urlField.value.trim();
+    if (!url) return;
+
+    const parsed = parseGitHubUrl(url);
+    if (parsed) {
+        fetchRepoCommits(parsed.owner, parsed.repo);
+    } else {
+        alert('Invalid GitHub URL. Please use format: https://github.com/owner/repo');
+    }
+});
+
+// Allow Enter key in URL field
+document.getElementById('repoUrlField').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        document.getElementById('repoUrlBtn').click();
     }
 });
 
@@ -233,14 +271,26 @@ document.getElementById('githubBtn').addEventListener('click', async () => {
 
 let allRepos = [];
 
-async function showRepoModal() {
+async function showRepoModal(showUserRepos = false) {
     const repoList = document.getElementById('repoList');
+    const repoSearchSection = document.getElementById('repoSearchSection');
     const progress = document.getElementById('repoProgress');
 
     openModal('repoModal');
+    progress.classList.add('hidden');
+
+    if (!showUserRepos) {
+        // Not logged in - just show URL input
+        repoSearchSection.style.display = 'none';
+        repoList.style.display = 'none';
+        return;
+    }
+
+    // Logged in - show everything
+    repoSearchSection.style.display = 'block';
+    repoList.style.display = 'block';
     repoList.innerHTML = '<div class="loading-repos">Loading repositories...</div>';
     repoList.classList.remove('hidden');
-    progress.classList.add('hidden');
 
     try {
         allRepos = [];
@@ -286,7 +336,8 @@ function renderRepoList(repos) {
             <div class="repo-name">
                 ${repo.private ? '<span class="repo-private">🔒</span>' : ''}
                 ${repo.full_name}
-                ${cached ? '<span class="repo-cached-badge" title="Cached - will only fetch new commits">cached</span>' : ''}
+                ${cached ? '<span class="repo-cached-badge" title="Cached">cached</span>' : ''}
+                ${cached ? '<button class="repo-refresh-btn" title="Re-fetch from GitHub">↻</button>' : ''}
             </div>
             <div class="repo-meta">
                 ${repo.language ? `<span class="repo-lang">${repo.language}</span>` : ''}
@@ -299,7 +350,17 @@ function renderRepoList(repos) {
 
     // Add click handlers
     repoList.querySelectorAll('.repo-item').forEach(item => {
-        item.addEventListener('click', () => {
+        item.addEventListener('click', (e) => {
+            // Check if refresh button was clicked
+            if (e.target.classList.contains('repo-refresh-btn')) {
+                e.stopPropagation();
+                const owner = item.dataset.owner;
+                const repo = item.dataset.repo;
+                // Clear cache and re-fetch
+                clearRepoCache(owner, repo);
+                fetchRepoCommits(owner, repo);
+                return;
+            }
             const owner = item.dataset.owner;
             const repo = item.dataset.repo;
             fetchRepoCommits(owner, repo);
@@ -405,6 +466,11 @@ function clearOldCaches() {
     }
 }
 
+function clearRepoCache(owner, repo) {
+    const key = getCacheKey(owner, repo);
+    localStorage.removeItem(key);
+}
+
 function getCachedReposList() {
     const repos = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -474,82 +540,65 @@ function updateRateLimitDisplay() {
 }
 
 // ============================================================================
-// Git Clone & Log Generation (using isomorphic-git)
+// Git Clone & Log Generation (isomorphic-git with optimized tree diff)
 // ============================================================================
 
-// Initialize filesystem for git operations
-let fs = null;
-let gitFs = null;
+// lightning-fs for isomorphic-git
+let lfs = null;
+let pfs = null;
 
-function initGitFs() {
-    if (!fs) {
-        fs = new LightningFS('gource-fs', { wipe: true });
-        gitFs = fs.promises;
-    }
-    return gitFs;
-}
-
-// CORS proxy for git operations (GitHub doesn't allow direct browser access)
+// CORS proxy for git clone
 const CORS_PROXY = 'https://cors.isomorphic-git.org';
 
-// Get tree entries as a flat map of path -> {oid, type}
-async function getTreeMap(dir, commitOid) {
-    const pfs = initGitFs();
-    const map = new Map();
-
-    try {
-        const { tree } = await git.readTree({
-            fs: pfs,
-            dir,
-            oid: commitOid
-        });
-
-        // Walk the tree recursively
-        async function walkTree(entries, prefix = '') {
-            for (const entry of entries) {
-                const path = prefix ? `${prefix}/${entry.path}` : entry.path;
-
-                if (entry.type === 'blob') {
-                    map.set(path, { oid: entry.oid, type: 'blob' });
-                } else if (entry.type === 'tree') {
-                    const subtree = await git.readTree({
-                        fs: pfs,
-                        dir,
-                        oid: entry.oid
-                    });
-                    await walkTree(subtree.tree, path);
-                }
-            }
-        }
-
-        await walkTree(tree);
-    } catch (err) {
-        // Commit might have no tree (initial commit edge case)
-        console.warn('Failed to read tree:', err);
+function initLightningFs() {
+    if (!lfs) {
+        lfs = new LightningFS('gource-git', { wipe: true });
+        pfs = lfs.promises;
     }
-
-    return map;
+    return pfs;
 }
 
-// Diff two tree maps to find changes
-function diffTrees(oldMap, newMap) {
+// Fast tree diff using git.walk() with two TREE walkers
+async function diffCommits(fs, dir, parentOid, commitOid) {
     const changes = [];
 
-    // Check for added and modified files
-    for (const [path, newEntry] of newMap) {
-        const oldEntry = oldMap.get(path);
-        if (!oldEntry) {
-            changes.push({ path, action: 'A' });
-        } else if (oldEntry.oid !== newEntry.oid) {
-            changes.push({ path, action: 'M' });
-        }
-    }
+    if (!parentOid) {
+        // First commit - all files are additions
+        await git.walk({
+            fs, dir,
+            trees: [git.TREE({ ref: commitOid })],
+            map: async (filepath, [entry]) => {
+                if (filepath === '.' || !entry) return;
+                if ((await entry.type()) === 'tree') return;
+                changes.push({ path: filepath, action: 'A' });
+            }
+        });
+    } else {
+        // Compare two commits
+        await git.walk({
+            fs, dir,
+            trees: [git.TREE({ ref: parentOid }), git.TREE({ ref: commitOid })],
+            map: async (filepath, [parent, current]) => {
+                if (filepath === '.') return;
 
-    // Check for deleted files
-    for (const [path] of oldMap) {
-        if (!newMap.has(path)) {
-            changes.push({ path, action: 'D' });
-        }
+                const parentType = parent ? await parent.type() : null;
+                const currentType = current ? await current.type() : null;
+
+                // Skip directories
+                if (parentType === 'tree' || currentType === 'tree') return;
+
+                const pOid = parent ? await parent.oid() : null;
+                const cOid = current ? await current.oid() : null;
+
+                if (!pOid && cOid) {
+                    changes.push({ path: filepath, action: 'A' });
+                } else if (pOid && !cOid) {
+                    changes.push({ path: filepath, action: 'D' });
+                } else if (pOid !== cOid) {
+                    changes.push({ path: filepath, action: 'M' });
+                }
+            }
+        });
     }
 
     return changes;
@@ -557,116 +606,104 @@ function diffTrees(oldMap, newMap) {
 
 async function fetchRepoCommits(owner, repo) {
     const repoList = document.getElementById('repoList');
+    const repoUrlInput = document.getElementById('repoUrlInput');
+    const repoSearchSection = document.getElementById('repoSearchSection');
     const progress = document.getElementById('repoProgress');
     const progressText = progress.querySelector('.progress-text');
     const progressFill = progress.querySelector('.progress-fill');
     const progressDetail = progress.querySelector('.progress-detail');
 
-    repoList.classList.add('hidden');
+    // Pause Gource to free up main thread
+    if (gourcePause) gourcePause();
+
+    // Hide everything except progress
+    repoList.style.display = 'none';
+    repoUrlInput.style.display = 'none';
+    if (repoSearchSection) repoSearchSection.style.display = 'none';
     progress.classList.remove('hidden');
     progressFill.style.backgroundColor = '';
 
-    const pfs = initGitFs();
-    const dir = `/${owner}/${repo}`;
+    const dir = `/${owner}_${repo}`;
     const url = `https://github.com/${owner}/${repo}`;
 
     try {
-        // Clean up any existing clone and create fresh directory
-        try {
-            await pfs.rmdir(dir, { recursive: true });
-        } catch (e) {
-            // Directory might not exist
-        }
+        progressText.textContent = 'Initializing...';
+        progressFill.style.width = '5%';
 
-        // Create directories one level at a time (lightning-fs recursive can be buggy)
-        try {
-            await pfs.mkdir(`/${owner}`);
-        } catch (e) {
-            // May already exist
-        }
-        try {
-            await pfs.mkdir(dir);
-        } catch (e) {
-            // May already exist
-        }
+        const pfs = initLightningFs();
+        const fs = { promises: pfs };
 
-        // Clone the repository (shallow, no checkout)
+        // Clean up
+        try { await pfs.rmdir(dir, { recursive: true }); } catch(e) {}
+        await pfs.mkdir(dir, { recursive: true });
+
+        // Clone
         progressText.textContent = 'Cloning repository...';
         progressDetail.textContent = 'This may take a while for large repos';
         progressFill.style.width = '10%';
 
         await git.clone({
-            fs: pfs,
-            http: GitHttp,
-            dir,
+            fs, http: GitHttp, dir,
             corsProxy: CORS_PROXY,
             url,
             singleBranch: true,
             noCheckout: true,
-            depth: 10000, // Limit to recent commits for performance
+            depth: 10000,
             onProgress: (event) => {
                 if (event.phase === 'Receiving objects') {
-                    const pct = Math.round((event.loaded / event.total) * 60) + 10;
+                    const pct = Math.round((event.loaded / event.total) * 40) + 10;
                     progressFill.style.width = `${pct}%`;
                     progressDetail.textContent = `Receiving: ${Math.round(event.loaded / 1024)} KB`;
                 } else if (event.phase === 'Resolving deltas') {
-                    progressFill.style.width = '70%';
+                    progressFill.style.width = '50%';
                     progressDetail.textContent = 'Resolving deltas...';
                 }
             }
         });
 
+        progressFill.style.width = '55%';
+        progressText.textContent = 'Reading commits...';
+
         // Get commit history
-        progressText.textContent = 'Reading commit history...';
-        progressFill.style.width = '75%';
+        const commits = await git.log({ fs, dir, depth: 10000 });
+        console.log(`Found ${commits.length} commits`);
 
-        const commits = await git.log({
-            fs: pfs,
-            dir,
-            depth: 10000
-        });
-
-        progressDetail.textContent = `${commits.length} commits found`;
-
-        // Process commits and build Gource log
         progressText.textContent = 'Processing file changes...';
         const logLines = [];
-        let prevTreeMap = new Map();
+        const total = commits.length;
 
-        for (let i = commits.length - 1; i >= 0; i--) {
+        // Process commits in reverse order (oldest first)
+        for (let i = total - 1; i >= 0; i--) {
             const commit = commits[i];
-            const timestamp = Math.floor(new Date(commit.commit.author.timestamp * 1000).getTime() / 1000);
+            const timestamp = commit.commit.author.timestamp;
             const author = commit.commit.author.name || 'Unknown';
+            const parentOid = commit.commit.parent[0] || null;
 
-            // Get tree for this commit
-            const treeMap = await getTreeMap(dir, commit.oid);
-
-            // Diff with previous commit's tree
-            const changes = diffTrees(prevTreeMap, treeMap);
+            // Use optimized tree diff
+            const changes = await diffCommits(fs, dir, parentOid, commit.oid);
 
             for (const change of changes) {
                 logLines.push(`${timestamp}|${author}|${change.action}|${change.path}`);
             }
 
-            prevTreeMap = treeMap;
-
             // Update progress
-            const processed = commits.length - i;
-            const pct = Math.round((processed / commits.length) * 25) + 75;
-            progressFill.style.width = `${pct}%`;
-            progressDetail.textContent = `${processed} / ${commits.length} commits processed`;
+            const processed = total - i;
+            if (processed % 10 === 0 || processed === total) {
+                const pct = Math.round((processed / total) * 40) + 55;
+                progressFill.style.width = `${pct}%`;
+                progressDetail.textContent = `${processed} / ${total} commits`;
+            }
         }
 
         progressFill.style.width = '100%';
         progressText.textContent = 'Loading visualization...';
+        progressDetail.textContent = `${logLines.length} file changes found`;
 
         if (logLines.length === 0) {
             throw new Error('No file changes found');
         }
 
-        // Cache the results
-        const lastCommit = commits[0];
-        setCachedRepo(owner, repo, logLines, lastCommit.oid, new Date(lastCommit.commit.author.timestamp * 1000).toISOString());
+        setCachedRepo(owner, repo, logLines, 'isomorphic-git', new Date().toISOString());
 
         const logData = logLines.join('\n');
 
@@ -675,16 +712,16 @@ async function fetchRepoCommits(owner, repo) {
             closeModal('repoModal');
         }
 
-        // Cleanup filesystem
-        try {
-            await pfs.rmdir(dir, { recursive: true });
-        } catch (e) {}
+        // Cleanup
+        try { await pfs.rmdir(dir, { recursive: true }); } catch(e) {}
 
     } catch (err) {
         console.error('Failed to clone/process repository:', err);
         progressText.textContent = `Error: ${err.message}`;
         progressFill.style.width = '0%';
         progressFill.style.backgroundColor = '#f44';
+        // Resume Gource if there was an error
+        if (gourceResume) gourceResume();
     }
 }
 

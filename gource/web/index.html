@@ -76,8 +76,15 @@
         <div class="modal-content repo-modal-content">
             <span class="modal-close" id="repoModalClose">&times;</span>
             <h2>Select Repository</h2>
-            <div id="repoSearch">
-                <input type="text" id="repoSearchInput" placeholder="Search repositories...">
+            <div id="repoUrlInput" class="repo-url-section">
+                <input type="text" id="repoUrlField" placeholder="Paste GitHub URL (e.g. https://github.com/owner/repo)">
+                <button id="repoUrlBtn">Clone</button>
+            </div>
+            <div id="repoSearchSection">
+                <div class="repo-divider"><span>or select from your repos</span></div>
+                <div id="repoSearch">
+                    <input type="text" id="repoSearchInput" placeholder="Search repositories...">
+                </div>
             </div>
             <div id="repoList" class="repo-list">
                 <div class="loading-repos">Loading repositories...</div>
@@ -132,18 +139,15 @@
         </div>
     </div>
 
-    <!-- isomorphic-git for in-browser git clone -->
+    <!-- isomorphic-git for cloning through CORS proxy -->
     <script src="vendor/buffer.min.js"></script>
-    <script>
-        // isomorphic-git requires Buffer global
-        window.Buffer = buffer.Buffer;
-    </script>
+    <script>window.Buffer = buffer.Buffer;</script>
     <script src="vendor/lightning-fs.min.js"></script>
     <script src="vendor/isomorphic-git.min.js"></script>
     <script src="vendor/isomorphic-git-http.min.js"></script>
 
     <script src="gource-web.js"></script>
-    <script src="gource.js"></script>
+    <script type="module" src="gource.js"></script>
     <script>
         // Auto-load demo if ?demo query param is present
         if (window.location.search.includes('demo')) {

@@ -23,6 +23,28 @@ extern "C" {
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_KEEPALIVE
 #endif
+void gource_pause() {
+#ifdef __EMSCRIPTEN__
+    if (g_gource_started) {
+        emscripten_pause_main_loop();
+    }
+#endif
+}
+
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+void gource_resume() {
+#ifdef __EMSCRIPTEN__
+    if (g_gource_started) {
+        emscripten_resume_main_loop();
+    }
+#endif
+}
+
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
 void gource_reset() {
     printf("gource_reset: cleaning up...\n");
 

@@ -2689,7 +2689,7 @@ void Gource::draw(float t, float dt) {
     fontmedium.setColour(vec4(gGourceSettings.font_colour, 1.0f));
 
     if(!gGourceSettings.hide_date) {
-        fontmedium.draw(display.width/2 - date_x_offset, 20, displaydate);
+        fontmedium.draw(20, 20, displaydate);
     }
 
     if(!gGourceSettings.title.empty()) {
