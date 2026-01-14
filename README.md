@@ -10,8 +10,10 @@ Visit the live demo at: https://gource.denialof.services/
 
 - Full Gource visualization running in the browser
 - Load git logs directly from your local machine
-- No server-side processing - everything runs client-side
+- **GitHub Integration**: Clone and visualize any GitHub repository directly in the browser
+- In-browser git clone using [isomorphic-git](https://isomorphic-git.org/) - no API rate limits
 - WebGL 2.0 accelerated rendering
+- No server-side processing - everything runs client-side
 
 ## Usage
 
@@ -100,10 +102,81 @@ Dependencies are managed automatically by xmake:
 - TinyXML
 - Core library (from [acaudwell/Core](https://github.com/acaudwell/Core))
 
+## Deployment
+
+The live demo is deployed using [Cloudflare Workers](https://workers.cloudflare.com/) with static assets. The worker handles GitHub OAuth authentication and serves the static files.
+
+### Self-Hosting
+
+To deploy your own instance:
+
+#### 1. Create a GitHub App
+
+1. Go to GitHub Settings → Developer settings → GitHub Apps → New GitHub App
+2. Set the following:
+   - **App name**: Your app name
+   - **Homepage URL**: Your deployment URL
+   - **Callback URL**: `https://your-domain.com/api/auth/github/callback`
+   - **Webhook**: Uncheck "Active" (not needed)
+   - **Permissions**: Repository contents (read-only)
+3. Note your **Client ID** and generate a **Client Secret**
+
+#### 2. Configure Wrangler
+
+Create `worker/wrangler.toml`:
+
+```toml
+name = "gource-web"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+routes = [
+  { pattern = "your-domain.com", custom_domain = true }
+]
+
+[assets]
+directory = "../docs"
+
+[vars]
+GITHUB_CLIENT_ID = "your-client-id"
+```
+
+Set your client secret as a Wrangler secret (not in the config file):
+
+```bash
+cd worker
+wrangler secret put GITHUB_CLIENT_SECRET
+```
+
+#### 3. Deploy
+
+```bash
+cd worker
+wrangler deploy
+```
+
+### Worker Architecture
+
+The Cloudflare Worker (`worker/src/index.js`) handles:
+
+- **Static assets**: Serves files from the `docs/` directory
+- **OAuth flow**:
+  - `GET /api/auth/github` - Initiates GitHub OAuth
+  - `GET /api/auth/github/callback` - Exchanges code for token
+- **API proxy**: Proxies GitHub API requests to add authentication and handle CORS
+
+All git operations (cloning, reading commits) happen client-side using isomorphic-git with a CORS proxy.
+
 ## Project Structure
 
 ```
 gource-web/
+├── docs/              # Deployed static assets
+│   ├── index.html
+│   ├── gource.js
+│   ├── gource.css
+│   ├── gource-web.*   # Built WebAssembly files
+│   └── vendor/        # Vendored JS dependencies
 ├── gource/
 │   ├── src/           # Main Gource source code
 │   │   ├── core/      # Core library (display, fonts, shaders, etc.)
@@ -111,12 +184,11 @@ gource-web/
 │   │   └── tinyxml/   # XML parsing library
 │   ├── data/          # Resources (fonts, shaders, textures)
 │   │   └── shaders/   # GLSL ES 3.00 shaders
-│   ├── web/           # Web frontend
-│   │   ├── index.html
-│   │   ├── gource.js
-│   │   ├── gource.css
-│   │   └── gource-web.*  # Built WebAssembly files
+│   ├── web/           # Development web files (synced to docs/)
 │   └── xmake.lua      # Build configuration
+├── worker/
+│   ├── src/index.js   # Cloudflare Worker source
+│   └── wrangler.toml  # Wrangler deployment config
 └── README.md
 ```
 
