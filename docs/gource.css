@@ -287,6 +287,32 @@ kbd {
     color: #58a6ff;
 }
 
+.repo-cached-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    margin-left: 8px;
+    background: rgba(35, 134, 54, 0.2);
+    border: 1px solid rgba(35, 134, 54, 0.4);
+    border-radius: 10px;
+    color: #238636;
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    vertical-align: middle;
+}
+
+.repo-commits {
+    color: #8b949e;
+}
+
+.repo-item.repo-cached {
+    border-color: rgba(35, 134, 54, 0.3);
+}
+
+.repo-item.repo-cached:hover {
+    border-color: #238636;
+}
+
 /* Progress */
 .repo-progress {
     padding: 40px 20px;

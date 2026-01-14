@@ -270,25 +270,32 @@ async function showRepoModal() {
 
 function renderRepoList(repos) {
     const repoList = document.getElementById('repoList');
+    const cachedRepos = getCachedReposList();
+    const cachedMap = new Map(cachedRepos.map(r => [`${r.owner}/${r.repo}`, r]));
 
     if (repos.length === 0) {
         repoList.innerHTML = '<div class="no-repos">No repositories found</div>';
         return;
     }
 
-    repoList.innerHTML = repos.map(repo => `
-        <div class="repo-item" data-owner="${repo.owner.login}" data-repo="${repo.name}">
+    repoList.innerHTML = repos.map(repo => {
+        const cacheKey = `${repo.owner.login}/${repo.name}`;
+        const cached = cachedMap.get(cacheKey);
+        return `
+        <div class="repo-item ${cached ? 'repo-cached' : ''}" data-owner="${repo.owner.login}" data-repo="${repo.name}">
             <div class="repo-name">
                 ${repo.private ? '<span class="repo-private">🔒</span>' : ''}
                 ${repo.full_name}
+                ${cached ? '<span class="repo-cached-badge" title="Cached - will only fetch new commits">cached</span>' : ''}
             </div>
             <div class="repo-meta">
                 ${repo.language ? `<span class="repo-lang">${repo.language}</span>` : ''}
                 <span class="repo-stars">⭐ ${repo.stargazers_count}</span>
                 <span class="repo-updated">${formatDate(repo.updated_at)}</span>
+                ${cached ? `<span class="repo-commits">${cached.commitCount} commits</span>` : ''}
             </div>
         </div>
-    `).join('');
+    `}).join('');
 
     // Add click handlers
     repoList.querySelectorAll('.repo-item').forEach(item => {
@@ -333,6 +340,91 @@ document.getElementById('repoModal').addEventListener('click', (e) => {
         closeModal('repoModal');
     }
 });
+
+// ============================================================================
+// Repository Log Cache
+// ============================================================================
+
+const CACHE_KEY_PREFIX = 'gource_repo_';
+const CACHE_VERSION = 1;
+
+function getCacheKey(owner, repo) {
+    return `${CACHE_KEY_PREFIX}${owner}_${repo}`;
+}
+
+function getCachedRepo(owner, repo) {
+    try {
+        const key = getCacheKey(owner, repo);
+        const cached = localStorage.getItem(key);
+        if (!cached) return null;
+
+        const data = JSON.parse(cached);
+        if (data.version !== CACHE_VERSION) return null;
+
+        return data;
+    } catch (err) {
+        console.warn('Failed to read cache:', err);
+        return null;
+    }
+}
+
+function setCachedRepo(owner, repo, logLines, lastCommitSha, lastCommitDate) {
+    try {
+        const key = getCacheKey(owner, repo);
+        const data = {
+            version: CACHE_VERSION,
+            owner,
+            repo,
+            logLines,
+            lastCommitSha,
+            lastCommitDate,
+            cachedAt: Date.now()
+        };
+        localStorage.setItem(key, JSON.stringify(data));
+    } catch (err) {
+        console.warn('Failed to write cache:', err);
+        // If storage is full, try to clear old caches
+        if (err.name === 'QuotaExceededError') {
+            clearOldCaches();
+        }
+    }
+}
+
+function clearOldCaches() {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key.startsWith(CACHE_KEY_PREFIX)) {
+            keys.push(key);
+        }
+    }
+    // Remove oldest half
+    if (keys.length > 0) {
+        const toRemove = keys.slice(0, Math.ceil(keys.length / 2));
+        toRemove.forEach(key => localStorage.removeItem(key));
+    }
+}
+
+function getCachedReposList() {
+    const repos = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key.startsWith(CACHE_KEY_PREFIX)) {
+            try {
+                const data = JSON.parse(localStorage.getItem(key));
+                if (data.version === CACHE_VERSION) {
+                    repos.push({
+                        owner: data.owner,
+                        repo: data.repo,
+                        cachedAt: data.cachedAt,
+                        commitCount: data.logLines.length
+                    });
+                }
+            } catch (err) {}
+        }
+    }
+    return repos.sort((a, b) => b.cachedAt - a.cachedAt);
+}
 
 // ============================================================================
 // Rate Limit Tracking
@@ -415,18 +507,36 @@ async function fetchRepoCommits(owner, repo) {
 
     repoList.classList.add('hidden');
     progress.classList.remove('hidden');
+    progressFill.style.backgroundColor = ''; // Reset error color
+
+    // Check for cached data
+    const cached = getCachedRepo(owner, repo);
+    let cachedLogLines = cached ? cached.logLines : [];
+    let sinceDate = cached ? cached.lastCommitDate : null;
 
     try {
-        // Step 1: Fetch all commits (paginated)
-        progressText.textContent = 'Fetching commit list...';
+        // Step 1: Fetch commits (only new ones if cached)
+        if (cached) {
+            progressText.textContent = 'Checking for new commits...';
+        } else {
+            progressText.textContent = 'Fetching commit list...';
+        }
         progressFill.style.width = '0%';
 
         let commits = [];
         let page = 1;
         let hasMore = true;
 
+        // Fetch commits, using 'since' parameter if we have cached data
         while (hasMore) {
-            const response = await fetch(`/api/repos/${owner}/${repo}/commits?per_page=100&page=${page}`, {
+            let url = `/api/repos/${owner}/${repo}/commits?per_page=100&page=${page}`;
+            if (sinceDate) {
+                // Add 1 second to avoid fetching the same commit
+                const since = new Date(new Date(sinceDate).getTime() + 1000).toISOString();
+                url += `&since=${since}`;
+            }
+
+            const response = await fetch(url, {
                 headers: { 'Authorization': `Bearer ${githubToken}` }
             });
 
@@ -442,7 +552,11 @@ async function fetchRepoCommits(owner, repo) {
             const pageCommits = await response.json();
             commits = commits.concat(pageCommits);
 
-            progressDetail.textContent = `${commits.length} commits found...`;
+            if (cached) {
+                progressDetail.textContent = `${commits.length} new commits found...`;
+            } else {
+                progressDetail.textContent = `${commits.length} commits found...`;
+            }
 
             const linkHeader = response.headers.get('Link');
             hasMore = linkHeader && linkHeader.includes('rel="next"');
@@ -454,53 +568,70 @@ async function fetchRepoCommits(owner, repo) {
             }
         }
 
-        if (commits.length === 0) {
+        // If no new commits and we have cache, just load from cache
+        if (commits.length === 0 && cached) {
+            progressText.textContent = 'Loading from cache...';
+            progressFill.style.width = '100%';
+
+            const logData = cachedLogLines.join('\n');
+            if (gourceLoadLog) {
+                gourceLoadLog(logData);
+                closeModal('repoModal');
+            }
+            return;
+        }
+
+        if (commits.length === 0 && !cached) {
             throw new Error('No commits found');
         }
 
-        // Step 2: Fetch file details concurrently (10 at a time)
-        progressText.textContent = 'Fetching file changes...';
-        const gourceLog = [];
+        // Step 2: Fetch file details for new commits concurrently
+        progressText.textContent = cached ? 'Fetching new file changes...' : 'Fetching file changes...';
+        const newLogLines = [];
         let completed = 0;
+        let lastCommitSha = commits.length > 0 ? commits[0].sha : (cached ? cached.lastCommitSha : null);
+        let lastCommitDate = commits.length > 0 ? commits[0].commit.author.date : (cached ? cached.lastCommitDate : null);
 
-        const commitDetails = await fetchConcurrent(
-            commits,
-            10, // concurrency limit
-            async (commit, idx) => {
-                const response = await fetch(`/api/repos/${owner}/${repo}/commits/${commit.sha}`, {
-                    headers: { 'Authorization': `Bearer ${githubToken}` }
-                });
+        if (commits.length > 0) {
+            const commitDetails = await fetchConcurrent(
+                commits,
+                10, // concurrency limit
+                async (commit, idx) => {
+                    const response = await fetch(`/api/repos/${owner}/${repo}/commits/${commit.sha}`, {
+                        headers: { 'Authorization': `Bearer ${githubToken}` }
+                    });
 
-                updateRateLimitFromResponse(response);
+                    updateRateLimitFromResponse(response);
 
-                completed++;
-                const percent = Math.round((completed / commits.length) * 100);
-                progressFill.style.width = `${percent}%`;
-                progressDetail.textContent = `${completed} / ${commits.length} commits`;
+                    completed++;
+                    const percent = Math.round((completed / commits.length) * 100);
+                    progressFill.style.width = `${percent}%`;
+                    progressDetail.textContent = `${completed} / ${commits.length} commits`;
 
-                if (response.ok) {
-                    return { commit, detail: await response.json() };
+                    if (response.ok) {
+                        return { commit, detail: await response.json() };
+                    }
+                    return { commit, detail: null };
                 }
-                return { commit, detail: null };
-            }
-        );
+            );
 
-        // Process results
-        for (const result of commitDetails) {
-            if (result.error || !result.detail) continue;
+            // Process results
+            for (const result of commitDetails) {
+                if (result.error || !result.detail) continue;
 
-            const { commit, detail } = result;
-            const timestamp = Math.floor(new Date(commit.commit.author.date).getTime() / 1000);
-            const author = commit.commit.author.name || commit.author?.login || 'Unknown';
+                const { commit, detail } = result;
+                const timestamp = Math.floor(new Date(commit.commit.author.date).getTime() / 1000);
+                const author = commit.commit.author.name || commit.author?.login || 'Unknown';
 
-            if (detail.files) {
-                for (const file of detail.files) {
-                    let action = 'M';
-                    if (file.status === 'added') action = 'A';
-                    else if (file.status === 'removed') action = 'D';
-                    else if (file.status === 'renamed') action = 'M';
+                if (detail.files) {
+                    for (const file of detail.files) {
+                        let action = 'M';
+                        if (file.status === 'added') action = 'A';
+                        else if (file.status === 'removed') action = 'D';
+                        else if (file.status === 'renamed') action = 'M';
 
-                    gourceLog.push(`${timestamp}|${author}|${action}|${file.filename}`);
+                        newLogLines.push(`${timestamp}|${author}|${action}|${file.filename}`);
+                    }
                 }
             }
         }
@@ -508,14 +639,23 @@ async function fetchRepoCommits(owner, repo) {
         progressFill.style.width = '100%';
         progressText.textContent = 'Loading visualization...';
 
+        // Merge with cached data
+        const allLogLines = [...cachedLogLines, ...newLogLines];
+
         // Sort by timestamp
-        gourceLog.sort((a, b) => {
+        allLogLines.sort((a, b) => {
             const ta = parseInt(a.split('|')[0]);
             const tb = parseInt(b.split('|')[0]);
             return ta - tb;
         });
 
-        const logData = gourceLog.join('\n');
+        // Remove duplicates (same timestamp + author + action + file)
+        const uniqueLogLines = [...new Set(allLogLines)];
+
+        // Save to cache
+        setCachedRepo(owner, repo, uniqueLogLines, lastCommitSha, lastCommitDate);
+
+        const logData = uniqueLogLines.join('\n');
 
         if (gourceLoadLog) {
             gourceLoadLog(logData);
