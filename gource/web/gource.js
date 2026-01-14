@@ -38,8 +38,36 @@ GourceModule({
     document.getElementById('loading').innerHTML = '<p style="color: #f44;">Failed to load Gource</p>';
 });
 
-// Load log file
+// Load log file modal
 document.getElementById('loadBtn').addEventListener('click', () => {
+    openModal('loadLogModal');
+});
+
+document.getElementById('loadLogModalClose').addEventListener('click', () => {
+    closeModal('loadLogModal');
+});
+
+document.getElementById('loadLogModal').addEventListener('click', (e) => {
+    if (e.target.id === 'loadLogModal') {
+        closeModal('loadLogModal');
+    }
+});
+
+// CLI command copy to clipboard
+document.getElementById('cliCommand').addEventListener('click', async () => {
+    const command = 'git log --pretty=format:"%at|%an|%ae" --reverse --name-status';
+    try {
+        await navigator.clipboard.writeText(command);
+        const hint = document.querySelector('#cliCommand .copy-hint');
+        hint.textContent = 'Copied!';
+        setTimeout(() => { hint.textContent = 'Click to copy'; }, 2000);
+    } catch (err) {
+        console.error('Failed to copy:', err);
+    }
+});
+
+// Select file button in modal
+document.getElementById('selectFileBtn').addEventListener('click', () => {
     document.getElementById('logFile').click();
 });
 
@@ -52,21 +80,10 @@ document.getElementById('logFile').addEventListener('change', (e) => {
         const logData = event.target.result;
         if (gourceLoadLog) {
             gourceLoadLog(logData);
+            closeModal('loadLogModal');
         }
     };
     reader.readAsText(file);
-});
-
-// Fullscreen toggle
-document.getElementById('fullscreenBtn').addEventListener('click', () => {
-    const canvas = document.getElementById('canvas');
-    if (!document.fullscreenElement) {
-        canvas.requestFullscreen().catch(err => {
-            console.warn('Fullscreen request failed:', err);
-        });
-    } else {
-        document.exitFullscreen();
-    }
 });
 
 // Resize handling
@@ -78,6 +95,37 @@ window.addEventListener('resize', () => {
 
 // Initial resize
 window.dispatchEvent(new Event('resize'));
+
+// ============================================================================
+// Modal Management (with input capture control)
+// ============================================================================
+
+let activeModals = 0;
+
+function openModal(modalId) {
+    const modal = document.getElementById(modalId);
+    modal.classList.add('show');
+    activeModals++;
+    // Disable canvas input capture when modal is open
+    canvas.style.pointerEvents = 'none';
+    canvas.blur();
+}
+
+function closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    modal.classList.remove('show');
+    activeModals--;
+    if (activeModals <= 0) {
+        activeModals = 0;
+        // Re-enable canvas input capture when all modals closed
+        canvas.style.pointerEvents = 'auto';
+        canvas.focus();
+    }
+}
+
+function isModalOpen() {
+    return activeModals > 0;
+}
 
 // Fetch log from URL
 async function loadLogFromUrl(url) {
@@ -103,13 +151,15 @@ function updateGitHubButton() {
     const text = document.getElementById('githubBtnText');
 
     if (githubToken && githubUser) {
-        text.textContent = githubUser.login;
+        text.textContent = 'Select Repo';
         btn.classList.add('logged-in');
+        btn.title = `Logged in as ${githubUser.login}`;
     } else if (githubToken) {
         text.textContent = 'Loading...';
     } else {
         text.textContent = 'Login with GitHub';
         btn.classList.remove('logged-in');
+        btn.title = '';
     }
 }
 
@@ -182,12 +232,12 @@ document.getElementById('githubBtn').addEventListener('click', async () => {
 let allRepos = [];
 
 async function showRepoModal() {
-    const modal = document.getElementById('repoModal');
     const repoList = document.getElementById('repoList');
     const progress = document.getElementById('repoProgress');
 
-    modal.classList.add('show');
+    openModal('repoModal');
     repoList.innerHTML = '<div class="loading-repos">Loading repositories...</div>';
+    repoList.classList.remove('hidden');
     progress.classList.add('hidden');
 
     try {
@@ -273,18 +323,85 @@ document.getElementById('repoSearchInput').addEventListener('input', (e) => {
 
 // Close modal handlers
 document.getElementById('repoModalClose').addEventListener('click', () => {
-    document.getElementById('repoModal').classList.remove('show');
+    closeModal('repoModal');
 });
 
 document.getElementById('repoModal').addEventListener('click', (e) => {
     if (e.target.id === 'repoModal') {
-        document.getElementById('repoModal').classList.remove('show');
+        closeModal('repoModal');
     }
 });
 
 // ============================================================================
+// Rate Limit Tracking
+// ============================================================================
+
+let rateLimitRemaining = null;
+let rateLimitTotal = null;
+let rateLimitReset = null;
+
+function updateRateLimitFromResponse(response) {
+    const remaining = response.headers.get('X-RateLimit-Remaining');
+    const limit = response.headers.get('X-RateLimit-Limit');
+    const reset = response.headers.get('X-RateLimit-Reset');
+
+    if (remaining) rateLimitRemaining = parseInt(remaining);
+    if (limit) rateLimitTotal = parseInt(limit);
+    if (reset) rateLimitReset = parseInt(reset);
+
+    updateRateLimitDisplay();
+}
+
+function updateRateLimitDisplay() {
+    let badge = document.getElementById('rateLimitBadge');
+    if (!badge) {
+        badge = document.createElement('div');
+        badge.id = 'rateLimitBadge';
+        badge.innerHTML = `
+            <svg height="14" viewBox="0 0 16 16" width="14" fill="currentColor">
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+            </svg>
+            <span class="rate-limit-text"></span>
+        `;
+        document.body.appendChild(badge);
+    }
+
+    if (rateLimitRemaining !== null && rateLimitTotal !== null) {
+        badge.querySelector('.rate-limit-text').textContent = `${rateLimitRemaining} / ${rateLimitTotal}`;
+        badge.style.display = 'flex';
+
+        // Color based on remaining
+        const pct = rateLimitRemaining / rateLimitTotal;
+        if (pct < 0.1) badge.className = 'rate-limit-critical';
+        else if (pct < 0.3) badge.className = 'rate-limit-warning';
+        else badge.className = '';
+    }
+}
+
+// ============================================================================
 // Fetch Commits & Generate Gource Log
 // ============================================================================
+
+// Concurrent fetch with limit
+async function fetchConcurrent(urls, concurrency, fetchFn) {
+    const results = [];
+    let index = 0;
+
+    async function worker() {
+        while (index < urls.length) {
+            const i = index++;
+            try {
+                results[i] = await fetchFn(urls[i], i);
+            } catch (err) {
+                results[i] = { error: err };
+            }
+        }
+    }
+
+    const workers = Array(Math.min(concurrency, urls.length)).fill(null).map(() => worker());
+    await Promise.all(workers);
+    return results;
+}
 
 async function fetchRepoCommits(owner, repo) {
     const repoList = document.getElementById('repoList');
@@ -310,9 +427,10 @@ async function fetchRepoCommits(owner, repo) {
                 headers: { 'Authorization': `Bearer ${githubToken}` }
             });
 
+            updateRateLimitFromResponse(response);
+
             if (!response.ok) {
                 if (response.status === 409) {
-                    // Empty repository
                     throw new Error('Repository is empty');
                 }
                 throw new Error('Failed to fetch commits');
@@ -323,12 +441,10 @@ async function fetchRepoCommits(owner, repo) {
 
             progressDetail.textContent = `${commits.length} commits found...`;
 
-            // Check Link header for pagination
             const linkHeader = response.headers.get('Link');
             hasMore = linkHeader && linkHeader.includes('rel="next"');
             page++;
 
-            // Safety limit
             if (commits.length >= 5000) {
                 console.warn('Limiting to 5000 commits');
                 hasMore = false;
@@ -339,51 +455,57 @@ async function fetchRepoCommits(owner, repo) {
             throw new Error('No commits found');
         }
 
-        // Step 2: Fetch file details for each commit
+        // Step 2: Fetch file details concurrently (10 at a time)
         progressText.textContent = 'Fetching file changes...';
         const gourceLog = [];
+        let completed = 0;
 
-        for (let i = 0; i < commits.length; i++) {
-            const commit = commits[i];
-            const percent = Math.round((i / commits.length) * 100);
-            progressFill.style.width = `${percent}%`;
-            progressDetail.textContent = `${i + 1} / ${commits.length} commits`;
-
-            try {
+        const commitDetails = await fetchConcurrent(
+            commits,
+            10, // concurrency limit
+            async (commit, idx) => {
                 const response = await fetch(`/api/repos/${owner}/${repo}/commits/${commit.sha}`, {
                     headers: { 'Authorization': `Bearer ${githubToken}` }
                 });
 
+                updateRateLimitFromResponse(response);
+
+                completed++;
+                const percent = Math.round((completed / commits.length) * 100);
+                progressFill.style.width = `${percent}%`;
+                progressDetail.textContent = `${completed} / ${commits.length} commits`;
+
                 if (response.ok) {
-                    const detail = await response.json();
-                    const timestamp = Math.floor(new Date(commit.commit.author.date).getTime() / 1000);
-                    const author = commit.commit.author.name || commit.author?.login || 'Unknown';
-
-                    if (detail.files) {
-                        for (const file of detail.files) {
-                            let action = 'M'; // Modified
-                            if (file.status === 'added') action = 'A';
-                            else if (file.status === 'removed') action = 'D';
-                            else if (file.status === 'renamed') action = 'M';
-
-                            gourceLog.push(`${timestamp}|${author}|${action}|${file.filename}`);
-                        }
-                    }
+                    return { commit, detail: await response.json() };
                 }
+                return { commit, detail: null };
+            }
+        );
 
-                // Rate limit: small delay between requests
-                if (i % 10 === 0) {
-                    await new Promise(r => setTimeout(r, 100));
+        // Process results
+        for (const result of commitDetails) {
+            if (result.error || !result.detail) continue;
+
+            const { commit, detail } = result;
+            const timestamp = Math.floor(new Date(commit.commit.author.date).getTime() / 1000);
+            const author = commit.commit.author.name || commit.author?.login || 'Unknown';
+
+            if (detail.files) {
+                for (const file of detail.files) {
+                    let action = 'M';
+                    if (file.status === 'added') action = 'A';
+                    else if (file.status === 'removed') action = 'D';
+                    else if (file.status === 'renamed') action = 'M';
+
+                    gourceLog.push(`${timestamp}|${author}|${action}|${file.filename}`);
                 }
-            } catch (err) {
-                console.warn(`Failed to fetch commit ${commit.sha}:`, err);
             }
         }
 
         progressFill.style.width = '100%';
         progressText.textContent = 'Loading visualization...';
 
-        // Sort by timestamp and load
+        // Sort by timestamp
         gourceLog.sort((a, b) => {
             const ta = parseInt(a.split('|')[0]);
             const tb = parseInt(b.split('|')[0]);
@@ -394,8 +516,7 @@ async function fetchRepoCommits(owner, repo) {
 
         if (gourceLoadLog) {
             gourceLoadLog(logData);
-            document.getElementById('repoModal').classList.remove('show');
-            canvas.focus();
+            closeModal('repoModal');
         }
 
     } catch (err) {

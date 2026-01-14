@@ -23,9 +23,23 @@
                 <span id="githubBtnText">Login with GitHub</span>
             </button>
             <button id="demoBtn">Load Demo</button>
-            <button id="fullscreenBtn">Fullscreen</button>
             <button id="helpBtn" class="help-btn">?</button>
             <span id="fps"></span>
+        </div>
+    </div>
+
+    <!-- Load Git Log Modal -->
+    <div id="loadLogModal" class="modal">
+        <div class="modal-content load-log-modal-content">
+            <span class="modal-close" id="loadLogModalClose">&times;</span>
+            <h2>Load Git Log</h2>
+            <p class="modal-description">Generate a git log from your repository using this command:</p>
+            <div class="cli-command" id="cliCommand">
+                <code>git log --pretty=format:"%at|%an|%ae" --reverse --name-status</code>
+                <span class="copy-hint">Click to copy</span>
+            </div>
+            <p class="modal-description">Then select the output file:</p>
+            <button id="selectFileBtn" class="select-file-btn">Select Log File</button>
         </div>
     </div>
 
@@ -110,27 +124,30 @@
         });
 
         // Help modal handlers
-        const modal = document.getElementById('helpModal');
+        const helpModal = document.getElementById('helpModal');
         const helpBtn = document.getElementById('helpBtn');
-        const closeBtn = document.querySelector('.modal-close');
+        const helpCloseBtn = helpModal.querySelector('.modal-close');
 
         helpBtn.addEventListener('click', () => {
-            modal.classList.add('show');
+            openModal('helpModal');
         });
 
-        closeBtn.addEventListener('click', () => {
-            modal.classList.remove('show');
+        helpCloseBtn.addEventListener('click', () => {
+            closeModal('helpModal');
         });
 
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                modal.classList.remove('show');
+        helpModal.addEventListener('click', (e) => {
+            if (e.target === helpModal) {
+                closeModal('helpModal');
             }
         });
 
+        // Global escape key handler for all modals
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && modal.classList.contains('show')) {
-                modal.classList.remove('show');
+            if (e.key === 'Escape' && isModalOpen()) {
+                document.querySelectorAll('.modal.show').forEach(modal => {
+                    closeModal(modal.id);
+                });
             }
         });
     </script>
