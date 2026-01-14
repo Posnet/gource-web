@@ -483,7 +483,7 @@ let gitFs = null;
 
 function initGitFs() {
     if (!fs) {
-        fs = new LightningFS('gource-fs');
+        fs = new LightningFS('gource-fs', { wipe: true });
         gitFs = fs.promises;
     }
     return gitFs;
@@ -571,13 +571,24 @@ async function fetchRepoCommits(owner, repo) {
     const url = `https://github.com/${owner}/${repo}`;
 
     try {
-        // Clean up any existing clone
+        // Clean up any existing clone and create fresh directory
         try {
             await pfs.rmdir(dir, { recursive: true });
         } catch (e) {
             // Directory might not exist
         }
-        await pfs.mkdir(dir, { recursive: true });
+
+        // Create directories one level at a time (lightning-fs recursive can be buggy)
+        try {
+            await pfs.mkdir(`/${owner}`);
+        } catch (e) {
+            // May already exist
+        }
+        try {
+            await pfs.mkdir(dir);
+        } catch (e) {
+            // May already exist
+        }
 
         // Clone the repository (shallow, no checkout)
         progressText.textContent = 'Cloning repository...';
