@@ -696,9 +696,12 @@ void Gource::keyPress(SDL_KeyboardEvent *e) {
 
         if(commitlog==0) return;
 
+#ifndef __EMSCRIPTEN__
+        // Screenshot doesn't work in web builds (writes to virtual filesystem)
         if(e->keysym.sym == SDLK_F12) {
             take_screenshot = true;
         }
+#endif
 
         if (e->keysym.sym == SDLK_q) {
             debug = !debug;

@@ -13,3 +13,4 @@ build/
 .DS_Store
 Thumbs.db
 PLAN.md
+worker/.wrangler/

@@ -148,9 +148,12 @@ void GourceShell::keyPress(SDL_KeyboardEvent *e) {
         bool key_return = e->keysym.unicode == SDLK_RETURN;
 #endif
 
+#ifndef __EMSCRIPTEN__
+        // Don't quit on ESC in web builds - breaks the app
         if (key_escape) {
             quit();
         }
+#endif
 
         if(gGourceSettings.disable_input) {
             // disable keyboard input other than the escape key
