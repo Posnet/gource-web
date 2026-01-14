@@ -169,7 +169,25 @@ target("gource-web")
         add_ldflags("-sASSERTIONS=2", "-sGL_DEBUG=1", {force = true})
     else
         set_optimize("faster")
-        add_cxflags("-flto")
-        add_ldflags("-flto", "-sASSERTIONS=0", {force = true})
+        add_cxflags("-O3", "-flto", {force = true})
+        add_ldflags("-O3", "-flto", "-sASSERTIONS=0", {force = true})
+        -- Use closure compiler for JS optimization
+        add_ldflags("--closure", "1", {force = true})
     end
+
+    -- Post-build: optimize WASM with wasm-opt in release mode
+    after_build(function (target)
+        if not is_mode("debug") then
+            local wasm_file = target:targetfile():gsub("%.js$", ".wasm")
+            if os.isfile(wasm_file) then
+                print("Optimizing WASM with wasm-opt...")
+                local before_size = os.filesize(wasm_file)
+                os.execv("wasm-opt", {"-O3", "--enable-bulk-memory", "--enable-simd", "--enable-threads", "--enable-nontrapping-float-to-int", "--enable-sign-ext", "-o", wasm_file, wasm_file})
+                local after_size = os.filesize(wasm_file)
+                print(string.format("WASM size: %.2f MB -> %.2f MB (%.1f%% reduction)",
+                    before_size/1024/1024, after_size/1024/1024,
+                    (1 - after_size/before_size) * 100))
+            end
+        end
+    end)
 target_end()

@@ -474,28 +474,85 @@ function updateRateLimitDisplay() {
 }
 
 // ============================================================================
-// Fetch Commits & Generate Gource Log
+// Git Clone & Log Generation (using isomorphic-git)
 // ============================================================================
 
-// Concurrent fetch with limit
-async function fetchConcurrent(urls, concurrency, fetchFn) {
-    const results = [];
-    let index = 0;
+// Initialize filesystem for git operations
+let fs = null;
+let gitFs = null;
 
-    async function worker() {
-        while (index < urls.length) {
-            const i = index++;
-            try {
-                results[i] = await fetchFn(urls[i], i);
-            } catch (err) {
-                results[i] = { error: err };
+function initGitFs() {
+    if (!fs) {
+        fs = new LightningFS('gource-fs');
+        gitFs = fs.promises;
+    }
+    return gitFs;
+}
+
+// CORS proxy for git operations (GitHub doesn't allow direct browser access)
+const CORS_PROXY = 'https://cors.isomorphic-git.org';
+
+// Get tree entries as a flat map of path -> {oid, type}
+async function getTreeMap(dir, commitOid) {
+    const pfs = initGitFs();
+    const map = new Map();
+
+    try {
+        const { tree } = await git.readTree({
+            fs: pfs,
+            dir,
+            oid: commitOid
+        });
+
+        // Walk the tree recursively
+        async function walkTree(entries, prefix = '') {
+            for (const entry of entries) {
+                const path = prefix ? `${prefix}/${entry.path}` : entry.path;
+
+                if (entry.type === 'blob') {
+                    map.set(path, { oid: entry.oid, type: 'blob' });
+                } else if (entry.type === 'tree') {
+                    const subtree = await git.readTree({
+                        fs: pfs,
+                        dir,
+                        oid: entry.oid
+                    });
+                    await walkTree(subtree.tree, path);
+                }
             }
+        }
+
+        await walkTree(tree);
+    } catch (err) {
+        // Commit might have no tree (initial commit edge case)
+        console.warn('Failed to read tree:', err);
+    }
+
+    return map;
+}
+
+// Diff two tree maps to find changes
+function diffTrees(oldMap, newMap) {
+    const changes = [];
+
+    // Check for added and modified files
+    for (const [path, newEntry] of newMap) {
+        const oldEntry = oldMap.get(path);
+        if (!oldEntry) {
+            changes.push({ path, action: 'A' });
+        } else if (oldEntry.oid !== newEntry.oid) {
+            changes.push({ path, action: 'M' });
         }
     }
 
-    const workers = Array(Math.min(concurrency, urls.length)).fill(null).map(() => worker());
-    await Promise.all(workers);
-    return results;
+    // Check for deleted files
+    for (const [path] of oldMap) {
+        if (!newMap.has(path)) {
+            changes.push({ path, action: 'D' });
+        }
+    }
+
+    return changes;
 }
 
 async function fetchRepoCommits(owner, repo) {
@@ -507,163 +564,113 @@ async function fetchRepoCommits(owner, repo) {
 
     repoList.classList.add('hidden');
     progress.classList.remove('hidden');
-    progressFill.style.backgroundColor = ''; // Reset error color
+    progressFill.style.backgroundColor = '';
 
-    // Check for cached data
-    const cached = getCachedRepo(owner, repo);
-    let cachedLogLines = cached ? cached.logLines : [];
-    let sinceDate = cached ? cached.lastCommitDate : null;
+    const pfs = initGitFs();
+    const dir = `/${owner}/${repo}`;
+    const url = `https://github.com/${owner}/${repo}`;
 
     try {
-        // Step 1: Fetch commits (only new ones if cached)
-        if (cached) {
-            progressText.textContent = 'Checking for new commits...';
-        } else {
-            progressText.textContent = 'Fetching commit list...';
+        // Clean up any existing clone
+        try {
+            await pfs.rmdir(dir, { recursive: true });
+        } catch (e) {
+            // Directory might not exist
         }
-        progressFill.style.width = '0%';
+        await pfs.mkdir(dir, { recursive: true });
 
-        let commits = [];
-        let page = 1;
-        let hasMore = true;
+        // Clone the repository (shallow, no checkout)
+        progressText.textContent = 'Cloning repository...';
+        progressDetail.textContent = 'This may take a while for large repos';
+        progressFill.style.width = '10%';
 
-        // Fetch commits, using 'since' parameter if we have cached data
-        while (hasMore) {
-            let url = `/api/repos/${owner}/${repo}/commits?per_page=100&page=${page}`;
-            if (sinceDate) {
-                // Add 1 second to avoid fetching the same commit
-                const since = new Date(new Date(sinceDate).getTime() + 1000).toISOString();
-                url += `&since=${since}`;
-            }
-
-            const response = await fetch(url, {
-                headers: { 'Authorization': `Bearer ${githubToken}` }
-            });
-
-            updateRateLimitFromResponse(response);
-
-            if (!response.ok) {
-                if (response.status === 409) {
-                    throw new Error('Repository is empty');
-                }
-                throw new Error('Failed to fetch commits');
-            }
-
-            const pageCommits = await response.json();
-            commits = commits.concat(pageCommits);
-
-            if (cached) {
-                progressDetail.textContent = `${commits.length} new commits found...`;
-            } else {
-                progressDetail.textContent = `${commits.length} commits found...`;
-            }
-
-            const linkHeader = response.headers.get('Link');
-            hasMore = linkHeader && linkHeader.includes('rel="next"');
-            page++;
-
-            if (commits.length >= 5000) {
-                console.warn('Limiting to 5000 commits');
-                hasMore = false;
-            }
-        }
-
-        // If no new commits and we have cache, just load from cache
-        if (commits.length === 0 && cached) {
-            progressText.textContent = 'Loading from cache...';
-            progressFill.style.width = '100%';
-
-            const logData = cachedLogLines.join('\n');
-            if (gourceLoadLog) {
-                gourceLoadLog(logData);
-                closeModal('repoModal');
-            }
-            return;
-        }
-
-        if (commits.length === 0 && !cached) {
-            throw new Error('No commits found');
-        }
-
-        // Step 2: Fetch file details for new commits concurrently
-        progressText.textContent = cached ? 'Fetching new file changes...' : 'Fetching file changes...';
-        const newLogLines = [];
-        let completed = 0;
-        let lastCommitSha = commits.length > 0 ? commits[0].sha : (cached ? cached.lastCommitSha : null);
-        let lastCommitDate = commits.length > 0 ? commits[0].commit.author.date : (cached ? cached.lastCommitDate : null);
-
-        if (commits.length > 0) {
-            const commitDetails = await fetchConcurrent(
-                commits,
-                10, // concurrency limit
-                async (commit, idx) => {
-                    const response = await fetch(`/api/repos/${owner}/${repo}/commits/${commit.sha}`, {
-                        headers: { 'Authorization': `Bearer ${githubToken}` }
-                    });
-
-                    updateRateLimitFromResponse(response);
-
-                    completed++;
-                    const percent = Math.round((completed / commits.length) * 100);
-                    progressFill.style.width = `${percent}%`;
-                    progressDetail.textContent = `${completed} / ${commits.length} commits`;
-
-                    if (response.ok) {
-                        return { commit, detail: await response.json() };
-                    }
-                    return { commit, detail: null };
-                }
-            );
-
-            // Process results
-            for (const result of commitDetails) {
-                if (result.error || !result.detail) continue;
-
-                const { commit, detail } = result;
-                const timestamp = Math.floor(new Date(commit.commit.author.date).getTime() / 1000);
-                const author = commit.commit.author.name || commit.author?.login || 'Unknown';
-
-                if (detail.files) {
-                    for (const file of detail.files) {
-                        let action = 'M';
-                        if (file.status === 'added') action = 'A';
-                        else if (file.status === 'removed') action = 'D';
-                        else if (file.status === 'renamed') action = 'M';
-
-                        newLogLines.push(`${timestamp}|${author}|${action}|${file.filename}`);
-                    }
+        await git.clone({
+            fs: pfs,
+            http: GitHttp,
+            dir,
+            corsProxy: CORS_PROXY,
+            url,
+            singleBranch: true,
+            noCheckout: true,
+            depth: 10000, // Limit to recent commits for performance
+            onProgress: (event) => {
+                if (event.phase === 'Receiving objects') {
+                    const pct = Math.round((event.loaded / event.total) * 60) + 10;
+                    progressFill.style.width = `${pct}%`;
+                    progressDetail.textContent = `Receiving: ${Math.round(event.loaded / 1024)} KB`;
+                } else if (event.phase === 'Resolving deltas') {
+                    progressFill.style.width = '70%';
+                    progressDetail.textContent = 'Resolving deltas...';
                 }
             }
+        });
+
+        // Get commit history
+        progressText.textContent = 'Reading commit history...';
+        progressFill.style.width = '75%';
+
+        const commits = await git.log({
+            fs: pfs,
+            dir,
+            depth: 10000
+        });
+
+        progressDetail.textContent = `${commits.length} commits found`;
+
+        // Process commits and build Gource log
+        progressText.textContent = 'Processing file changes...';
+        const logLines = [];
+        let prevTreeMap = new Map();
+
+        for (let i = commits.length - 1; i >= 0; i--) {
+            const commit = commits[i];
+            const timestamp = Math.floor(new Date(commit.commit.author.timestamp * 1000).getTime() / 1000);
+            const author = commit.commit.author.name || 'Unknown';
+
+            // Get tree for this commit
+            const treeMap = await getTreeMap(dir, commit.oid);
+
+            // Diff with previous commit's tree
+            const changes = diffTrees(prevTreeMap, treeMap);
+
+            for (const change of changes) {
+                logLines.push(`${timestamp}|${author}|${change.action}|${change.path}`);
+            }
+
+            prevTreeMap = treeMap;
+
+            // Update progress
+            const processed = commits.length - i;
+            const pct = Math.round((processed / commits.length) * 25) + 75;
+            progressFill.style.width = `${pct}%`;
+            progressDetail.textContent = `${processed} / ${commits.length} commits processed`;
         }
 
         progressFill.style.width = '100%';
         progressText.textContent = 'Loading visualization...';
 
-        // Merge with cached data
-        const allLogLines = [...cachedLogLines, ...newLogLines];
+        if (logLines.length === 0) {
+            throw new Error('No file changes found');
+        }
 
-        // Sort by timestamp
-        allLogLines.sort((a, b) => {
-            const ta = parseInt(a.split('|')[0]);
-            const tb = parseInt(b.split('|')[0]);
-            return ta - tb;
-        });
+        // Cache the results
+        const lastCommit = commits[0];
+        setCachedRepo(owner, repo, logLines, lastCommit.oid, new Date(lastCommit.commit.author.timestamp * 1000).toISOString());
 
-        // Remove duplicates (same timestamp + author + action + file)
-        const uniqueLogLines = [...new Set(allLogLines)];
-
-        // Save to cache
-        setCachedRepo(owner, repo, uniqueLogLines, lastCommitSha, lastCommitDate);
-
-        const logData = uniqueLogLines.join('\n');
+        const logData = logLines.join('\n');
 
         if (gourceLoadLog) {
             gourceLoadLog(logData);
             closeModal('repoModal');
         }
 
+        // Cleanup filesystem
+        try {
+            await pfs.rmdir(dir, { recursive: true });
+        } catch (e) {}
+
     } catch (err) {
-        console.error('Failed to fetch commits:', err);
+        console.error('Failed to clone/process repository:', err);
         progressText.textContent = `Error: ${err.message}`;
         progressFill.style.width = '0%';
         progressFill.style.backgroundColor = '#f44';
